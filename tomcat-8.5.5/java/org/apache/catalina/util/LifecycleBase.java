@@ -120,46 +120,30 @@ public abstract class LifecycleBase implements Lifecycle {
      */
     @Override
     public final synchronized void start() throws LifecycleException {
-
-        if (LifecycleState.STARTING_PREP.equals(state) || LifecycleState.STARTING.equals(state) ||
-                LifecycleState.STARTED.equals(state)) {
-
-            if (log.isDebugEnabled()) {
-                Exception e = new LifecycleException();
-                log.debug(sm.getString("lifecycleBase.alreadyStarted", toString()), e);
-            } else if (log.isInfoEnabled()) {
-                log.info(sm.getString("lifecycleBase.alreadyStarted", toString()));
-            }
-
+        // 已经处于启动中时直接返回
+        if (LifecycleState.STARTING_PREP.equals(state) || LifecycleState.STARTING.equals(state) || LifecycleState.STARTED.equals(state)) {
             return;
         }
+        // ...一些处理其它生命周期的逻辑
 
-        if (state.equals(LifecycleState.NEW)) {
-            init();
-        } else if (state.equals(LifecycleState.FAILED)) {
-            stop();
-        } else if (!state.equals(LifecycleState.INITIALIZED) &&
-                !state.equals(LifecycleState.STOPPED)) {
-            invalidTransition(Lifecycle.BEFORE_START_EVENT);
-        }
-
+        // 开始启动
         try {
+            // 设置当前生命周期状态为启动前并触发事件通知
             setStateInternal(LifecycleState.STARTING_PREP, null, false);
+            // 调用子类重写的模版方法执行具体启动逻辑
             startInternal();
+            // 启动失败直接停止
             if (state.equals(LifecycleState.FAILED)) {
-                // This is a 'controlled' failure. The component put itself into the
-                // FAILED state so call stop() to complete the clean-up.
                 stop();
             } else if (!state.equals(LifecycleState.STARTING)) {
-                // Shouldn't be necessary but acts as a check that sub-classes are
-                // doing what they are supposed to.
+                // 校验生命周期是否处于启动中
                 invalidTransition(Lifecycle.AFTER_START_EVENT);
             } else {
+                // 启动成功，设置当前生命周期为启动完成并触发事件通知
                 setStateInternal(LifecycleState.STARTED, null, false);
             }
         } catch (Throwable t) {
-            // This is an 'uncontrolled' failure so put the component into the
-            // FAILED state and throw an exception.
+            // 启动异常，设置生命周期为失败状态并触发事件通知
             ExceptionUtils.handleThrowable(t);
             setStateInternal(LifecycleState.FAILED, null, false);
             throw new LifecycleException(sm.getString("lifecycleBase.startFail", toString()), t);

@@ -694,8 +694,10 @@ public abstract class AbstractEndpoint<S> {
 
     public void createExecutor() {
         internalExecutor = true;
+        // 这个任务队列继承自LinkedBlockingQueue，tomcat做了一些定制化改造
         TaskQueue taskqueue = new TaskQueue();
         TaskThreadFactory tf = new TaskThreadFactory(getName() + "-exec-", daemon, getThreadPriority());
+        // getMinSpareThreads()默认为10，getMaxThreads()默认为200，
         executor = new ThreadPoolExecutor(getMinSpareThreads(), getMaxThreads(), 60, TimeUnit.SECONDS,taskqueue, tf);
         taskqueue.setParent( (ThreadPoolExecutor) executor);
     }
@@ -811,33 +813,20 @@ public abstract class AbstractEndpoint<S> {
      *
      * @return if processing was triggered successfully
      */
-    public boolean processSocket(SocketWrapperBase<S> socketWrapper,
-            SocketEvent event, boolean dispatch) {
-        try {
-            if (socketWrapper == null) {
-                return false;
-            }
-            SocketProcessorBase<S> sc = processorCache.pop();
-            if (sc == null) {
-                sc = createSocketProcessor(socketWrapper, event);
-            } else {
-                sc.reset(socketWrapper, event);
-            }
-            Executor executor = getExecutor();
-            if (dispatch && executor != null) {
-                executor.execute(sc);
-            } else {
-                sc.run();
-            }
-        } catch (RejectedExecutionException ree) {
-            getLog().warn(sm.getString("endpoint.executor.fail", socketWrapper) , ree);
-            return false;
-        } catch (Throwable t) {
-            ExceptionUtils.handleThrowable(t);
-            // This means we got an OOM or similar creating a thread, or that
-            // the pool and its queue are full
-            getLog().error(sm.getString("endpoint.process.fail"), t);
-            return false;
+    public boolean processSocket(SocketWrapperBase<S> socketWrapper, SocketEvent event, boolean dispatch) {
+        // ...
+        // 将socket和事件封装到SocketProcessorBase，然后丢到线程池处理
+        SocketProcessorBase<S> sc = processorCache.pop();
+        if (sc == null) {
+            sc = createSocketProcessor(socketWrapper, event);
+        } else {
+            sc.reset(socketWrapper, event);
+        }
+        Executor executor = getExecutor();
+        if (dispatch && executor != null) {
+            executor.execute(sc);
+        } else {
+            sc.run();
         }
         return true;
     }
@@ -870,10 +859,12 @@ public abstract class AbstractEndpoint<S> {
 
 
     public final void start() throws Exception {
+        // 如果没有绑定ip端口则先执行绑定逻辑
         if (bindState == BindState.UNBOUND) {
             bind();
             bindState = BindState.BOUND_ON_START;
         }
+        // 调用Endpoint实现类实现的模版方法
         startInternal();
     }
 

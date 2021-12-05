@@ -551,53 +551,18 @@ public class Catalina {
      * Start a new server instance.
      */
     public void start() {
+        getServer().start();
 
-        if (getServer() == null) {
-            load();
-        }
-
-        if (getServer() == null) {
-            log.fatal("Cannot start server. Server instance is not configured.");
-            return;
-        }
-
-        long t1 = System.nanoTime();
-
-        // Start the new server
-        try {
-            getServer().start();
-        } catch (LifecycleException e) {
-            log.fatal(sm.getString("catalina.serverStartFail"), e);
-            try {
-                getServer().destroy();
-            } catch (LifecycleException e1) {
-                log.debug("destroy() failed for failed Server ", e1);
-            }
-            return;
-        }
-
-        long t2 = System.nanoTime();
-        if(log.isInfoEnabled()) {
-            log.info("Server startup in " + ((t2 - t1) / 1000000) + " ms");
-        }
-
-        // Register shutdown hook
+        // 注册JVM关闭的钩子函数，用于优雅关闭Server等组件
+        // useShutdownHook默认为true，CatalinaShutdownHook为Catalina的内部类
         if (useShutdownHook) {
             if (shutdownHook == null) {
                 shutdownHook = new CatalinaShutdownHook();
             }
             Runtime.getRuntime().addShutdownHook(shutdownHook);
-
-            // If JULI is being used, disable JULI's shutdown hook since
-            // shutdown hooks run in parallel and log messages may be lost
-            // if JULI's hook completes before the CatalinaShutdownHook()
-            LogManager logManager = LogManager.getLogManager();
-            if (logManager instanceof ClassLoaderLogManager) {
-                ((ClassLoaderLogManager) logManager).setUseShutdownHook(
-                        false);
-            }
         }
 
+        // await在BootStrap中被设置为true，用于在shutdown端口阻塞监听关闭命令
         if (await) {
             await();
             stop();
@@ -609,42 +574,22 @@ public class Catalina {
      * Stop an existing server instance.
      */
     public void stop() {
-
-        try {
-            // Remove the ShutdownHook first so that server.stop()
-            // doesn't get invoked twice
-            if (useShutdownHook) {
-                Runtime.getRuntime().removeShutdownHook(shutdownHook);
-
-                // If JULI is being used, re-enable JULI's shutdown to ensure
-                // log messages are not lost
-                LogManager logManager = LogManager.getLogManager();
-                if (logManager instanceof ClassLoaderLogManager) {
-                    ((ClassLoaderLogManager) logManager).setUseShutdownHook(
-                            true);
-                }
-            }
-        } catch (Throwable t) {
-            ExceptionUtils.handleThrowable(t);
-            // This will fail on JDK 1.2. Ignoring, as Tomcat can run
-            // fine without the shutdown hook.
+        // 移除钩子函数，防止触发两次关闭
+        if (useShutdownHook) {
+            Runtime.getRuntime().removeShutdownHook(shutdownHook);
         }
 
-        // Shut down the server
-        try {
-            Server s = getServer();
-            LifecycleState state = s.getState();
-            if (LifecycleState.STOPPING_PREP.compareTo(state) <= 0
-                    && LifecycleState.DESTROYED.compareTo(state) >= 0) {
-                // Nothing to do. stop() was already called
-            } else {
-                s.stop();
-                s.destroy();
-            }
-        } catch (LifecycleException e) {
-            log.error("Catalina.stop", e);
+        // 关闭server
+        Server s = getServer();
+        LifecycleState state = s.getState();
+        // 已经关闭，不需要执行
+        if (LifecycleState.STOPPING_PREP.compareTo(state) <= 0 && LifecycleState.DESTROYED.compareTo(state) >= 0) {
+            // Nothing to do. stop() was already called
+        } else {
+            // 执行server.stop()与server.destroy()
+            s.stop();
+            s.destroy();
         }
-
     }
 
 
@@ -737,21 +682,8 @@ public class Catalina {
 
         @Override
         public void run() {
-            try {
-                if (getServer() != null) {
-                    Catalina.this.stop();
-                }
-            } catch (Throwable ex) {
-                ExceptionUtils.handleThrowable(ex);
-                log.error(sm.getString("catalina.shutdownHookFail"), ex);
-            } finally {
-                // If JULI is used, shut JULI down *after* the server shuts down
-                // so log messages aren't lost
-                LogManager logManager = LogManager.getLogManager();
-                if (logManager instanceof ClassLoaderLogManager) {
-                    ((ClassLoaderLogManager) logManager).shutdown();
-                }
-            }
+            // ...
+            Catalina.this.stop();
         }
     }
 

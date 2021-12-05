@@ -1564,93 +1564,11 @@ public class Nio2Endpoint extends AbstractJsseEndpoint<Nio2Channel> {
 
         @Override
         protected void doRun() {
-            if (SocketEvent.OPEN_WRITE != event) {
-                // Anything other than OPEN_WRITE is a genuine read or an
-                // error condition so for all of those release the semaphore
-                ((Nio2SocketWrapper) socketWrapper).releaseReadPending();
-            }
-            boolean launch = false;
-            try {
-                int handshake = -1;
-
-                try {
-                    if (socketWrapper.getSocket().isHandshakeComplete()) {
-                        // No TLS handshaking required. Let the handler
-                        // process this socket / event combination.
-                        handshake = 0;
-                    } else if (event == SocketEvent.STOP || event == SocketEvent.DISCONNECT ||
-                            event == SocketEvent.ERROR) {
-                        // Unable to complete the TLS handshake. Treat it as
-                        // if the handshake failed.
-                        handshake = -1;
-                    } else {
-                        handshake = socketWrapper.getSocket().handshake();
-                        // The handshake process reads/writes from/to the
-                        // socket. status may therefore be OPEN_WRITE once
-                        // the handshake completes. However, the handshake
-                        // happens when the socket is opened so the status
-                        // must always be OPEN_READ after it completes. It
-                        // is OK to always set this as it is only used if
-                        // the handshake completes.
-                        event = SocketEvent.OPEN_READ;
-                    }
-                } catch (IOException x) {
-                    handshake = -1;
-                    if (log.isDebugEnabled()) {
-                        log.debug(sm.getString("endpoint.err.handshake"), x);
-                    }
-                }
-                if (handshake == 0) {
-                    SocketState state = SocketState.OPEN;
-                    // Process the request from this socket
-                    if (event == null) {
-                        state = getHandler().process(socketWrapper, SocketEvent.OPEN_READ);
-                    } else {
-                        state = getHandler().process(socketWrapper, event);
-                    }
-                    if (state == SocketState.CLOSED) {
-                        // Close socket and pool
-                        closeSocket(socketWrapper);
-                        if (running && !paused) {
-                            if (!nioChannels.push(socketWrapper.getSocket())) {
-                                socketWrapper.getSocket().free();
-                            }
-                        }
-                    } else if (state == SocketState.UPGRADING) {
-                        launch = true;
-                    }
-                } else if (handshake == -1 ) {
-                    closeSocket(socketWrapper);
-                    if (running && !paused) {
-                        if (!nioChannels.push(socketWrapper.getSocket())) {
-                            socketWrapper.getSocket().free();
-                        }
-                    }
-                }
-            } catch (VirtualMachineError vme) {
-                ExceptionUtils.handleThrowable(vme);
-            } catch (Throwable t) {
-                log.error(sm.getString("endpoint.processing.fail"), t);
-                if (socketWrapper != null) {
-                    closeSocket(socketWrapper);
-                }
-            } finally {
-                if (launch) {
-                    try {
-                        getExecutor().execute(new SocketProcessor(socketWrapper, SocketEvent.OPEN_READ));
-                    } catch (NullPointerException npe) {
-                        if (running) {
-                            log.error(sm.getString("endpoint.launch.fail"),
-                                    npe);
-                        }
-                    }
-                }
-                socketWrapper = null;
-                event = null;
-                //return to cache
-                if (running && !paused) {
-                    processorCache.push(this);
-                }
+            // 获取该Endpoint绑定的协议处理器进行处理，handler的绑定时机是协议初始化时的构造函数，Endpoint绑定的handler是Http11NioProtocol
+            if (event == null) {
+                getHandler().process(socketWrapper, SocketEvent.OPEN_READ);
+            } else {
+                getHandler().process(socketWrapper, event);
             }
         }
     }

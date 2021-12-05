@@ -262,21 +262,20 @@ public class NioEndpoint extends AbstractJsseEndpoint<NioChannel> {
             running = true;
             paused = false;
 
-            processorCache = new SynchronizedStack<>(SynchronizedStack.DEFAULT_SIZE,
-                    socketProperties.getProcessorCache());
-            eventCache = new SynchronizedStack<>(SynchronizedStack.DEFAULT_SIZE,
-                            socketProperties.getEventCache());
-            nioChannels = new SynchronizedStack<>(SynchronizedStack.DEFAULT_SIZE,
-                    socketProperties.getBufferPool());
+            // 建立一些常用对象的缓存，用于提升性能
+            processorCache = new SynchronizedStack<>(SynchronizedStack.DEFAULT_SIZE, socketProperties.getProcessorCache());
+            eventCache = new SynchronizedStack<>(SynchronizedStack.DEFAULT_SIZE, socketProperties.getEventCache());
+            nioChannels = new SynchronizedStack<>(SynchronizedStack.DEFAULT_SIZE, socketProperties.getBufferPool());
 
-            // Create worker collection
+            // 创建线程池，调用的是抽象父类AbstractEndpoint的方法
             if ( getExecutor() == null ) {
                 createExecutor();
             }
 
+            // 初始化最大连接数限制，默认10000
             initializeConnectionLatch();
 
-            // Start poller threads
+            // 启动selector轮询线程，这里的Poller是一个内部类
             pollers = new Poller[getPollerThreadCount()];
             for (int i=0; i<pollers.length; i++) {
                 pollers[i] = new Poller();
@@ -286,6 +285,7 @@ public class NioEndpoint extends AbstractJsseEndpoint<NioChannel> {
                 pollerThread.start();
             }
 
+            // 启动请求接收线程，调用的是抽象父类AbstractEndpoint的方法
             startAcceptorThreads();
         }
     }
@@ -430,47 +430,18 @@ public class NioEndpoint extends AbstractJsseEndpoint<NioChannel> {
 
         @Override
         public void run() {
-
-            int errorDelay = 0;
-
-            // Loop until we receive a shutdown command
+            // 死循环监听，直到销毁
             while (running) {
-
-                // Loop if endpoint is paused
-                while (paused && running) {
-                    state = AcceptorState.PAUSED;
-                    try {
-                        Thread.sleep(50);
-                    } catch (InterruptedException e) {
-                        // Ignore
-                    }
-                }
-
-                if (!running) {
-                    break;
-                }
                 state = AcceptorState.RUNNING;
-
                 try {
-                    //if we have reached max connections, wait
+                    // 如果达到最大连接数则阻塞
                     countUpOrAwaitConnection();
 
-                    SocketChannel socket = null;
-                    try {
-                        // Accept the next incoming connection from the server
-                        // socket
-                        socket = serverSock.accept();
-                    } catch (IOException ioe) {
-                        //we didn't get a socket
-                        countDownConnection();
-                        // Introduce delay if necessary
-                        errorDelay = handleExceptionWithDelay(errorDelay);
-                        // re-throw
-                        throw ioe;
-                    }
-                    // Successful accept, reset the error delay
-                    errorDelay = 0;
+                    // 接收连接
+                    SocketChannel socket = serverSock.accept();
 
+                    // 设置连接属性并绑定socket到channel，然后注册channel到Poller
+                    setSocketOptions(socket);
                     // setSocketOptions() will add channel to the poller
                     // if successful
                     if (running && !paused) {
@@ -620,8 +591,7 @@ public class NioEndpoint extends AbstractJsseEndpoint<NioChannel> {
     public class Poller implements Runnable {
 
         private Selector selector;
-        private final SynchronizedQueue<PollerEvent> events =
-                new SynchronizedQueue<>();
+        private final SynchronizedQueue<PollerEvent> events = new SynchronizedQueue<>();
 
         private volatile boolean close = false;
         private long nextExpiration = 0;//optimize expiration handling
@@ -780,59 +750,26 @@ public class NioEndpoint extends AbstractJsseEndpoint<NioChannel> {
          */
         @Override
         public void run() {
-            // Loop until destroy() is called
+            // 死循环轮询，直到销毁
             while (true) {
-
-                boolean hasEvents = false;
-
-                try {
-                    if (!close) {
-                        hasEvents = events();
-                        if (wakeupCounter.getAndSet(-1) > 0) {
-                            //if we are here, means we have other stuff to do
-                            //do a non blocking select
-                            keyCount = selector.selectNow();
-                        } else {
-                            keyCount = selector.select(selectorTimeout);
-                        }
-                        wakeupCounter.set(0);
-                    }
-                    if (close) {
-                        events();
-                        timeout(0, false);
-                        try {
-                            selector.close();
-                        } catch (IOException ioe) {
-                            log.error(sm.getString("endpoint.nio.selectorCloseFail"), ioe);
-                        }
-                        break;
-                    }
-                } catch (Throwable x) {
-                    ExceptionUtils.handleThrowable(x);
-                    log.error("",x);
-                    continue;
-                }
-                //either we timed out or we woke up, process events first
-                if ( keyCount == 0 ) hasEvents = (hasEvents | events());
-
-                Iterator<SelectionKey> iterator =
-                    keyCount > 0 ? selector.selectedKeys().iterator() : null;
-                // Walk through the collection of ready keys and dispatch
-                // any active event.
+                // ...这段逻辑部分省略，主要用于统计事件
+                boolean hasEvents = events();
+                // 获取需要处理的key集合迭代器
+                Iterator<SelectionKey> iterator = keyCount > 0 ? selector.selectedKeys().iterator() : null;
+                // 遍历处理
                 while (iterator != null && iterator.hasNext()) {
                     SelectionKey sk = iterator.next();
                     NioSocketWrapper attachment = (NioSocketWrapper)sk.attachment();
-                    // Attachment may be null if another thread has called
-                    // cancelledKey()
                     if (attachment == null) {
                         iterator.remove();
                     } else {
                         iterator.remove();
+                        // 处理key以及相关事件(读写等)
                         processKey(sk, attachment);
                     }
-                }//while
+                }
 
-                //process timeouts
+                // 处理超时
                 timeout(keyCount,hasEvents);
             }//while
 
@@ -840,41 +777,31 @@ public class NioEndpoint extends AbstractJsseEndpoint<NioChannel> {
         }
 
         protected void processKey(SelectionKey sk, NioSocketWrapper attachment) {
-            try {
-                if ( close ) {
-                    cancelledKey(sk);
-                } else if ( sk.isValid() && attachment != null ) {
-                    if (sk.isReadable() || sk.isWritable() ) {
-                        if ( attachment.getSendfileData() != null ) {
-                            processSendfile(sk,attachment, false);
-                        } else {
-                            unreg(sk, attachment, sk.readyOps());
-                            boolean closeSocket = false;
-                            // Read goes before write
-                            if (sk.isReadable()) {
-                                if (!processSocket(attachment, SocketEvent.OPEN_READ, true)) {
-                                    closeSocket = true;
-                                }
-                            }
-                            if (!closeSocket && sk.isWritable()) {
-                                if (!processSocket(attachment, SocketEvent.OPEN_WRITE, true)) {
-                                    closeSocket = true;
-                                }
-                            }
-                            if (closeSocket) {
-                                cancelledKey(sk);
+            if ( sk.isValid() && attachment != null ) {
+                if (sk.isReadable() || sk.isWritable() ) {
+                    if ( attachment.getSendfileData() != null ) {
+                        processSendfile(sk,attachment, false);
+                    } else {
+                        unreg(sk, attachment, sk.readyOps());
+                        boolean closeSocket = false;
+                        // 处理读事件
+                        if (sk.isReadable()) {
+                            if (!processSocket(attachment, SocketEvent.OPEN_READ, true)) {
+                                closeSocket = true;
                             }
                         }
+                        // 处理写事件
+                        if (!closeSocket && sk.isWritable()) {
+                            if (!processSocket(attachment, SocketEvent.OPEN_WRITE, true)) {
+                                closeSocket = true;
+                            }
+                        }
+                        // 如果事件处理失败，直接关闭
+                        if (closeSocket) {
+                            cancelledKey(sk);
+                        }
                     }
-                } else {
-                    //invalid key
-                    cancelledKey(sk);
                 }
-            } catch ( CancelledKeyException ckx ) {
-                cancelledKey(sk);
-            } catch (Throwable t) {
-                ExceptionUtils.handleThrowable(t);
-                log.error("",t);
             }
         }
 

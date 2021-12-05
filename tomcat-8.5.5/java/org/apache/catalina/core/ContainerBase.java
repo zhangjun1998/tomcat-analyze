@@ -691,43 +691,21 @@ public abstract class ContainerBase extends LifecycleMBeanBase implements Contai
      */
     @Override
     public void addChild(Container child) {
-        if (Globals.IS_SECURITY_ENABLED) {
-            PrivilegedAction<Void> dp =
-                new PrivilegedAddChild(child);
-            AccessController.doPrivileged(dp);
-        } else {
-            addChildInternal(child);
-        }
+        // ...
+        addChildInternal(child);
     }
 
     private void addChildInternal(Container child) {
-
-        if( log.isDebugEnabled() )
-            log.debug("Add child " + child + " " + this);
         synchronized(children) {
-            if (children.get(child.getName()) != null)
-                throw new IllegalArgumentException("addChild:  Child name '" +
-                                                   child.getName() +
-                                                   "' is not unique");
-            child.setParent(this);  // May throw IAE
+            child.setParent(this);
             children.put(child.getName(), child);
         }
 
-        // Start child
-        // Don't do this inside sync block - start can be a slow process and
-        // locking the children object can cause problems elsewhere
-        try {
-            if ((getState().isAvailable() ||
-                    LifecycleState.STARTING_PREP.equals(getState())) &&
-                    startChildren) {
-                child.start();
-            }
-        } catch (LifecycleException e) {
-            log.error("ContainerBase.addChild: start: ", e);
-            throw new IllegalStateException("ContainerBase.addChild: start: " + e);
-        } finally {
-            fireContainerEvent(ADD_CHILD_EVENT, child);
+        if ((getState().isAvailable() || LifecycleState.STARTING_PREP.equals(getState())) && startChildren) {
+            child.start();
         }
+
+        fireContainerEvent(ADD_CHILD_EVENT, child);
     }
 
 
@@ -890,51 +868,37 @@ public abstract class ContainerBase extends LifecycleMBeanBase implements Contai
      */
     @Override
     protected synchronized void startInternal() throws LifecycleException {
-
-        // Start our subordinate components, if any
-        logger = null;
-        getLogger();
+        // 启动Cluster
         Cluster cluster = getClusterInternal();
         if (cluster instanceof Lifecycle) {
             ((Lifecycle) cluster).start();
         }
+        // 启动Realm
         Realm realm = getRealmInternal();
         if (realm instanceof Lifecycle) {
             ((Lifecycle) realm).start();
         }
 
-        // Start our child containers, if any
+        // 找到所有子容器并丢到线程池中启动
         Container children[] = findChildren();
         List<Future<Void>> results = new ArrayList<>();
         for (int i = 0; i < children.length; i++) {
             results.add(startStopExecutor.submit(new StartChild(children[i])));
         }
-
-        boolean fail = false;
+        // 阻塞当前线程直到所有子容器启动完成
         for (Future<Void> result : results) {
-            try {
-                result.get();
-            } catch (Exception e) {
-                log.error(sm.getString("containerBase.threadedStartFailed"), e);
-                fail = true;
-            }
-
-        }
-        if (fail) {
-            throw new LifecycleException(
-                    sm.getString("containerBase.threadedStartFailed"));
+            result.get();
         }
 
-        // Start the Valves in our pipeline (including the basic), if any
+        // 启动Pipeline
         if (pipeline instanceof Lifecycle)
             ((Lifecycle) pipeline).start();
 
-
+        // 设置生命周期状态为启动中并触发事件通知
         setState(LifecycleState.STARTING);
 
-        // Start our thread
+        // 按需启动线程用于调用子容器的backgroundProcess()方法，默认情况不会启动
         threadStart();
-
     }
 
 

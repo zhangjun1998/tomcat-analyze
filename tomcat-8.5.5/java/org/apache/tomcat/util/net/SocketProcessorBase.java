@@ -38,11 +38,7 @@ public abstract class SocketProcessorBase<S> implements Runnable {
     @Override
     public final void run() {
         synchronized (socketWrapper) {
-            // It is possible that processing may be triggered for read and
-            // write at the same time. The sync above makes sure that processing
-            // does not occur in parallel. The test below ensures that if the
-            // first event to be processed results in the socket being closed,
-            // the subsequent events are not processed.
+            // 防止读写事件并发处理
             if (socketWrapper.isClosed()) {
                 return;
             }

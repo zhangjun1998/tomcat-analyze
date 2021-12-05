@@ -50,8 +50,7 @@ import org.apache.tomcat.util.ExceptionUtils;
  * @author Craig R. McClanahan
  */
 
-public class StandardPipeline extends LifecycleBase
-        implements Pipeline, Contained {
+public class StandardPipeline extends LifecycleBase implements Pipeline, Contained {public class StandardPipeline extends LifecycleBase implements Pipeline, Contained {
 
     private static final Log log = LogFactory.getLog(StandardPipeline.class);
 
@@ -159,8 +158,7 @@ public class StandardPipeline extends LifecycleBase
      */
     @Override
     protected synchronized void startInternal() throws LifecycleException {
-
-        // Start the Valves in our pipeline (including the basic), if any
+        // 依次启动Pipeline中的Valve，相当于链表的形式
         Valve current = first;
         if (current == null) {
             current = basic;
@@ -171,6 +169,7 @@ public class StandardPipeline extends LifecycleBase
             current = current.getNext();
         }
 
+        // 设置生命周期状态为启动中并触发事件
         setState(LifecycleState.STARTING);
     }
 

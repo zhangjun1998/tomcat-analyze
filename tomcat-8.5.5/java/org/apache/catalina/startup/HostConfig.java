@@ -260,27 +260,23 @@ public class HostConfig implements LifecycleListener {
      */
     @Override
     public void lifecycleEvent(LifecycleEvent event) {
-
-        // Identify the host we are associated with
-        try {
-            host = (Host) event.getLifecycle();
-            if (host instanceof StandardHost) {
-                setCopyXML(((StandardHost) host).isCopyXML());
-                setDeployXML(((StandardHost) host).isDeployXML());
-                setUnpackWARs(((StandardHost) host).isUnpackWARs());
-                setContextClass(((StandardHost) host).getContextClass());
-            }
-        } catch (ClassCastException e) {
-            log.error(sm.getString("hostConfig.cce", event.getLifecycle()), e);
-            return;
+        // 获取触发事件的Host
+        host = (Host) event.getLifecycle();
+        // 为HostConfig设置属性
+        if (host instanceof StandardHost) {
+            setCopyXML(((StandardHost) host).isCopyXML());
+            setDeployXML(((StandardHost) host).isDeployXML());
+            setUnpackWARs(((StandardHost) host).isUnpackWARs());
+            setContextClass(((StandardHost) host).getContextClass());
         }
 
-        // Process the event that has occurred
+        // 根据触发的事件类型做出不同处理
         if (event.getType().equals(Lifecycle.PERIODIC_EVENT)) {
             check();
         } else if (event.getType().equals(Lifecycle.BEFORE_START_EVENT)) {
             beforeStart();
         } else if (event.getType().equals(Lifecycle.START_EVENT)) {
+            // 启动
             start();
         } else if (event.getType().equals(Lifecycle.STOP_EVENT)) {
             stop();
@@ -397,17 +393,18 @@ public class HostConfig implements LifecycleListener {
      * in our "application root" directory.
      */
     protected void deployApps() {
-
+        // 获取部署目录相关文件，appBase为webapp
         File appBase = host.getAppBaseFile();
         File configBase = host.getConfigBaseFile();
+        // 过滤出webapp要部署的目录
         String[] filteredAppPaths = filterAppPaths(appBase.list());
-        // Deploy XML descriptors from configBase
-        deployDescriptors(configBase, configBase.list());
-        // Deploy WARs
-        deployWARs(appBase, filteredAppPaths);
-        // Deploy expanded folders
-        deployDirectories(appBase, filteredAppPaths);
 
+        // 部署conf目录中的xml文件
+        deployDescriptors(configBase, configBase.list());
+        // 解压war包，这里还不会进行部署
+        deployWARs(appBase, filteredAppPaths);
+        // 部署webapp目录中的已解压文件
+        deployDirectories(appBase, filteredAppPaths);
     }
 
 
@@ -996,37 +993,36 @@ public class HostConfig implements LifecycleListener {
      * @param files The exploded webapps that should be deployed
      */
     protected void deployDirectories(File appBase, String[] files) {
-
-        if (files == null)
-            return;
-
+        // 这里部署用到了初始化时创建的startStopExecutor
         ExecutorService es = host.getStartStopExecutor();
         List<Future<?>> results = new ArrayList<>();
 
+        // 遍历部署所有目录
         for (int i = 0; i < files.length; i++) {
-
-            if (files[i].equalsIgnoreCase("META-INF"))
+            // 跳过对名为META-INF、WEB-INF目录的处理
+            if (files[i].equalsIgnoreCase("META-INF")) {
                 continue;
-            if (files[i].equalsIgnoreCase("WEB-INF"))
+            }
+            if (files[i].equalsIgnoreCase("WEB-INF")) {
                 continue;
+            }
+            // 开始部署当前目录
             File dir = new File(appBase, files[i]);
             if (dir.isDirectory()) {
+                // 设置ContextName为当前目录的名称
                 ContextName cn = new ContextName(files[i], false);
-
-                if (isServiced(cn.getName()) || deploymentExists(cn.getName()))
+                // 如果已经部署则跳过
+                if (isServiced(cn.getName()) || deploymentExists(cn.getName())) {
                     continue;
-
+                }
+                // 丢到线程池中进行部署
                 results.add(es.submit(new DeployDirectory(this, cn, dir)));
             }
         }
 
+        // 阻塞直到部署结束
         for (Future<?> result : results) {
-            try {
-                result.get();
-            } catch (Exception e) {
-                log.error(sm.getString(
-                        "hostConfig.deployDir.threaded.error"), e);
-            }
+            result.get();
         }
     }
 
@@ -1037,127 +1033,55 @@ public class HostConfig implements LifecycleListener {
      * @param dir The path to the root folder of the weapp
      */
     protected void deployDirectory(ContextName cn, File dir) {
-
-
-        long startTime = 0;
-        // Deploy the application in this directory
-        if( log.isInfoEnabled() ) {
-            startTime = System.currentTimeMillis();
-            log.info(sm.getString("hostConfig.deployDir",
-                    dir.getAbsolutePath()));
-        }
-
         Context context = null;
+        // 获取部署目录下/META-INF/context.xml文件
         File xml = new File(dir, Constants.ApplicationContextXml);
-        File xmlCopy =
-                new File(host.getConfigBaseFile(), cn.getBaseName() + ".xml");
-
+        File xmlCopy = new File(host.getConfigBaseFile(), cn.getBaseName() + ".xml");
 
         DeployedApplication deployedApp;
         boolean copyThisXml = copyXML;
 
-        try {
-            if (deployXML && xml.exists()) {
-                synchronized (digesterLock) {
-                    try {
-                        context = (Context) digester.parse(xml);
-                    } catch (Exception e) {
-                        log.error(sm.getString(
-                                "hostConfig.deployDescriptor.error",
-                                xml), e);
-                        context = new FailedContext();
-                    } finally {
-                        digester.reset();
-                        if (context == null) {
-                            context = new FailedContext();
-                        }
-                    }
-                }
-
-                if (copyThisXml == false && context instanceof StandardContext) {
-                    // Host is using default value. Context may override it.
-                    copyThisXml = ((StandardContext) context).getCopyXML();
-                }
-
-                if (copyThisXml) {
-                    Files.copy(xml.toPath(), xmlCopy.toPath());
-                    context.setConfigFile(xmlCopy.toURI().toURL());
-                } else {
-                    context.setConfigFile(xml.toURI().toURL());
-                }
-            } else if (!deployXML && xml.exists()) {
-                // Block deployment as META-INF/context.xml may contain security
-                // configuration necessary for a secure deployment.
-                log.error(sm.getString("hostConfig.deployDescriptor.blocked",
-                        cn.getPath(), xml, xmlCopy));
-                context = new FailedContext();
-            } else {
-                context = (Context) Class.forName(contextClass).newInstance();
+        // xml文件部署 && 部署目录下存在/META-INF/context.xml文件
+        if (deployXML && xml.exists()) {
+            synchronized (digesterLock) {
+                // 使用digester实例化Context
+                context = (Context) digester.parse(xml);
             }
-
-            Class<?> clazz = Class.forName(host.getConfigClass());
-            LifecycleListener listener =
-                (LifecycleListener) clazz.newInstance();
-            context.addLifecycleListener(listener);
-
-            context.setName(cn.getName());
-            context.setPath(cn.getPath());
-            context.setWebappVersion(cn.getVersion());
-            context.setDocBase(cn.getBaseName());
-            host.addChild(context);
-        } catch (Throwable t) {
-            ExceptionUtils.handleThrowable(t);
-            log.error(sm.getString("hostConfig.deployDir.error",
-                    dir.getAbsolutePath()), t);
-        } finally {
-            deployedApp = new DeployedApplication(cn.getName(),
-                    xml.exists() && deployXML && copyThisXml);
-
-            // Fake re-deploy resource to detect if a WAR is added at a later
-            // point
-            deployedApp.redeployResources.put(dir.getAbsolutePath() + ".war",
-                    Long.valueOf(0));
-            deployedApp.redeployResources.put(dir.getAbsolutePath(),
-                    Long.valueOf(dir.lastModified()));
-            if (deployXML && xml.exists()) {
-                if (copyThisXml) {
-                    deployedApp.redeployResources.put(
-                            xmlCopy.getAbsolutePath(),
-                            Long.valueOf(xmlCopy.lastModified()));
-                } else {
-                    deployedApp.redeployResources.put(
-                            xml.getAbsolutePath(),
-                            Long.valueOf(xml.lastModified()));
-                    // Fake re-deploy resource to detect if a context.xml file is
-                    // added at a later point
-                    deployedApp.redeployResources.put(
-                            xmlCopy.getAbsolutePath(),
-                            Long.valueOf(0));
-                }
-            } else {
-                // Fake re-deploy resource to detect if a context.xml file is
-                // added at a later point
-                deployedApp.redeployResources.put(
-                        xmlCopy.getAbsolutePath(),
-                        Long.valueOf(0));
-                if (!xml.exists()) {
-                    deployedApp.redeployResources.put(
-                            xml.getAbsolutePath(),
-                            Long.valueOf(0));
-                }
+            // 为context设置配置文件
+            if (copyThisXml == false && context instanceof StandardContext) {
+                // Host is using default value. Context may override it.
+                copyThisXml = ((StandardContext) context).getCopyXML();
             }
-            addWatchedResources(deployedApp, dir.getAbsolutePath(), context);
-            // Add the global redeploy resources (which are never deleted) at
-            // the end so they don't interfere with the deletion process
-            addGlobalRedeployResources(deployedApp);
+            if (copyThisXml) {
+                Files.copy(xml.toPath(), xmlCopy.toPath());
+                context.setConfigFile(xmlCopy.toURI().toURL());
+            } else {
+                context.setConfigFile(xml.toURI().toURL());
+            }
+        } else if (!deployXML && xml.exists()) {
+            // 非xml文件部署 && 部署目录下存在/META-INF/context.xml文件，失败
+            context = new FailedContext();
+        } else {
+            // 其它形式部署，直接反射创建StandardContext的实例
+            context = (Context) Class.forName(contextClass).newInstance();
         }
 
+        // 反射创建ContextConfig实例作为listener添加到context中
+        // 这里ContextConfig用于监听事件通知来控制Context的启动与停止
+        Class<?> clazz = Class.forName(host.getConfigClass());
+        LifecycleListener listener = (LifecycleListener) clazz.newInstance();
+        context.addLifecycleListener(listener);
+        // 设置context的属性
+        context.setName(cn.getName());
+        context.setPath(cn.getPath());
+        context.setWebappVersion(cn.getVersion());
+        context.setDocBase(cn.getBaseName());
+        // 将context添加为host的子容器，该方法调用的是ContainerBase的addChild()方法，会添加并启动子容器
+        host.addChild(context);
+
+        // 将该应用添加到已部署应用中
+        deployedApp = new DeployedApplication(cn.getName(), xml.exists() && deployXML && copyThisXml);
         deployed.put(cn.getName(), deployedApp);
-
-        if( log.isInfoEnabled() ) {
-            log.info(sm.getString("hostConfig.deployDir.finished",
-                    dir.getAbsolutePath(), Long.valueOf(System.currentTimeMillis() - startTime)));
-        }
     }
 
 
@@ -1526,30 +1450,22 @@ public class HostConfig implements LifecycleListener {
      * Process a "start" event for this Host.
      */
     public void start() {
+        // 向JMX中注册自己
+        ObjectName hostON = host.getObjectName();
+        oname = new ObjectName(hostON.getDomain() + ":type=Deployer,host=" + host.getName());
+        Registry.getRegistry(null, null).registerComponent(this, oname, this.getClass().getName());
 
-        if (log.isDebugEnabled())
-            log.debug(sm.getString("hostConfig.start"));
-
-        try {
-            ObjectName hostON = host.getObjectName();
-            oname = new ObjectName
-                (hostON.getDomain() + ":type=Deployer,host=" + host.getName());
-            Registry.getRegistry(null, null).registerComponent
-                (this, oname, this.getClass().getName());
-        } catch (Exception e) {
-            log.error(sm.getString("hostConfig.jmx.register", oname), e);
-        }
-
+        // 判断应用部署地址是否为有效目录
         if (!host.getAppBaseFile().isDirectory()) {
-            log.error(sm.getString("hostConfig.appBase", host.getName(),
-                    host.getAppBaseFile().getPath()));
+            log.error(sm.getString("hostConfig.appBase", host.getName(), host.getAppBaseFile().getPath()));
             host.setDeployOnStartup(false);
             host.setAutoDeploy(false);
         }
 
-        if (host.getDeployOnStartup())
+        // 部署
+        if (host.getDeployOnStartup()) {
             deployApps();
-
+        }
     }
 
 
@@ -1825,17 +1741,19 @@ public class HostConfig implements LifecycleListener {
     }
 
     private static class DeployDirectory implements Runnable {
-
+        // Host配置、Context名称、需部署目录
         private HostConfig config;
         private ContextName cn;
         private File dir;
 
+        // 构造器
         public DeployDirectory(HostConfig config, ContextName cn, File dir) {
             this.config = config;
             this.cn = cn;
             this.dir = dir;
         }
 
+        // 调用HostConfig的deployDirectory()方法执行部署
         @Override
         public void run() {
             config.deployDirectory(cn, dir);

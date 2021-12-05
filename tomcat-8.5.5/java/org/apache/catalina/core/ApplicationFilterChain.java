@@ -133,8 +133,7 @@ final class ApplicationFilterChain implements FilterChain {
      * @exception ServletException if a servlet exception occurs
      */
     @Override
-    public void doFilter(ServletRequest request, ServletResponse response)
-        throws IOException, ServletException {
+    public void doFilter(ServletRequest request, ServletResponse response) throws IOException, ServletException {
 
         if( Globals.IS_SECURITY_ENABLED ) {
             final ServletRequest req = request;
@@ -166,81 +165,10 @@ final class ApplicationFilterChain implements FilterChain {
         }
     }
 
-    private void internalDoFilter(ServletRequest request,
-                                  ServletResponse response)
-        throws IOException, ServletException {
-
-        // Call the next filter if there is one
-        if (pos < n) {
-            ApplicationFilterConfig filterConfig = filters[pos++];
-            try {
-                Filter filter = filterConfig.getFilter();
-
-                if (request.isAsyncSupported() && "false".equalsIgnoreCase(
-                        filterConfig.getFilterDef().getAsyncSupported())) {
-                    request.setAttribute(Globals.ASYNC_SUPPORTED_ATTR, Boolean.FALSE);
-                }
-                if( Globals.IS_SECURITY_ENABLED ) {
-                    final ServletRequest req = request;
-                    final ServletResponse res = response;
-                    Principal principal =
-                        ((HttpServletRequest) req).getUserPrincipal();
-
-                    Object[] args = new Object[]{req, res, this};
-                    SecurityUtil.doAsPrivilege ("doFilter", filter, classType, args, principal);
-                } else {
-                    filter.doFilter(request, response, this);
-                }
-            } catch (IOException | ServletException | RuntimeException e) {
-                throw e;
-            } catch (Throwable e) {
-                e = ExceptionUtils.unwrapInvocationTargetException(e);
-                ExceptionUtils.handleThrowable(e);
-                throw new ServletException(sm.getString("filterChain.filter"), e);
-            }
-            return;
-        }
-
-        // We fell off the end of the chain -- call the servlet instance
-        try {
-            if (ApplicationDispatcher.WRAP_SAME_OBJECT) {
-                lastServicedRequest.set(request);
-                lastServicedResponse.set(response);
-            }
-
-            if (request.isAsyncSupported() && !servletSupportsAsync) {
-                request.setAttribute(Globals.ASYNC_SUPPORTED_ATTR,
-                        Boolean.FALSE);
-            }
-            // Use potentially wrapped request from this point
-            if ((request instanceof HttpServletRequest) &&
-                    (response instanceof HttpServletResponse) &&
-                    Globals.IS_SECURITY_ENABLED ) {
-                final ServletRequest req = request;
-                final ServletResponse res = response;
-                Principal principal =
-                    ((HttpServletRequest) req).getUserPrincipal();
-                Object[] args = new Object[]{req, res};
-                SecurityUtil.doAsPrivilege("service",
-                                           servlet,
-                                           classTypeUsedInService,
-                                           args,
-                                           principal);
-            } else {
-                servlet.service(request, response);
-            }
-        } catch (IOException | ServletException | RuntimeException e) {
-            throw e;
-        } catch (Throwable e) {
-            e = ExceptionUtils.unwrapInvocationTargetException(e);
-            ExceptionUtils.handleThrowable(e);
-            throw new ServletException(sm.getString("filterChain.servlet"), e);
-        } finally {
-            if (ApplicationDispatcher.WRAP_SAME_OBJECT) {
-                lastServicedRequest.set(null);
-                lastServicedResponse.set(null);
-            }
-        }
+    private void internalDoFilter(ServletRequest request, ServletResponse response) throws IOException, ServletException {
+        // ...
+        // 调用servlet的service方法，进入我们的业务逻辑处理
+        servlet.service(request, response);
     }
 
 

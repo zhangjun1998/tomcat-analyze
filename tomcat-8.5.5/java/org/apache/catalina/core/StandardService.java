@@ -411,36 +411,31 @@ public class StandardService extends LifecycleMBeanBase implements Service {
      */
     @Override
     protected void startInternal() throws LifecycleException {
-        // 设置当前生命周期状态为启动中并发出事件通知
+        // 设置当前生命周期状态为启动中并触发事件通知
         setState(LifecycleState.STARTING);
 
-        // Start our defined Container first
+        // 启动Engine，Engine的所有子容器也会随之启动
         if (engine != null) {
             synchronized (engine) {
                 engine.start();
             }
         }
 
+        // 启动所有线程池
         synchronized (executors) {
             for (Executor executor: executors) {
                 executor.start();
             }
         }
 
+        // 启动mapperListener，主要作用在于将请求与相应的Servlet形成映射关系
         mapperListener.start();
 
-        // Start our defined Connectors second
+        // 启动Connector连接器，连接器会继续启动Endpoint
         synchronized (connectorsLock) {
             for (Connector connector: connectors) {
-                try {
-                    // If it has already failed, don't try and start it
-                    if (connector.getState() != LifecycleState.FAILED) {
-                        connector.start();
-                    }
-                } catch (Exception e) {
-                    log.error(sm.getString(
-                            "standardService.connector.startFailed",
-                            connector), e);
+                if (connector.getState() != LifecycleState.FAILED) {
+                    connector.start();
                 }
             }
         }

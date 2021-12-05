@@ -301,42 +301,12 @@ public class CoyoteAdapter implements Adapter {
      * Service method.
      */
     @Override
-    public void service(org.apache.coyote.Request req,
-                        org.apache.coyote.Response res)
-        throws Exception {
-
+    public void service(org.apache.coyote.Request req, org.apache.coyote.Response res) throws Exception {
+        // 将CoyoteRequest转为HttpServletRequest
         Request request = (Request) req.getNote(ADAPTER_NOTES);
         Response response = (Response) res.getNote(ADAPTER_NOTES);
 
-        if (request == null) {
-
-            // Create objects
-            request = connector.createRequest();
-            request.setCoyoteRequest(req);
-            response = connector.createResponse();
-            response.setCoyoteResponse(res);
-
-            // Link objects
-            request.setResponse(response);
-            response.setRequest(request);
-
-            // Set as notes
-            req.setNote(ADAPTER_NOTES, request);
-            res.setNote(ADAPTER_NOTES, response);
-
-            // Set query string encoding
-            req.getParameters().setQueryStringEncoding
-                (connector.getURIEncoding());
-
-        }
-
-        if (connector.getXpoweredBy()) {
-            response.addHeader("X-Powered-By", POWERED_BY);
-        }
-
-        boolean async = false;
         boolean postParseSuccess = false;
-
         try {
             // Parse and set Catalina and configuration specific
             // request parameters
@@ -345,60 +315,13 @@ public class CoyoteAdapter implements Adapter {
             if (postParseSuccess) {
                 //check valves if we support async
                 request.setAsyncSupported(connector.getService().getContainer().getPipeline().isAsyncSupported());
-                // Calling the container
+                // 最终通过父子关系获取Connector -> service -> container，在container的pipeline中处理
                 connector.getService().getContainer().getPipeline().getFirst().invoke(request, response);
             }
-            if (request.isAsync()) {
-                async = true;
-                ReadListener readListener = req.getReadListener();
-                if (readListener != null && request.isFinished()) {
-                    // Possible the all data may have been read during service()
-                    // method so this needs to be checked here
-                    ClassLoader oldCL = null;
-                    try {
-                        oldCL = request.getContext().bind(false, null);
-                        if (req.sendAllDataReadEvent()) {
-                            req.getReadListener().onAllDataRead();
-                        }
-                    } finally {
-                        request.getContext().unbind(false, oldCL);
-                    }
-                }
-
-                Throwable throwable =
-                        (Throwable) request.getAttribute(RequestDispatcher.ERROR_EXCEPTION);
-
-                // If an async request was started, is not going to end once
-                // this container thread finishes and an error occurred, trigger
-                // the async error process
-                if (!request.isAsyncCompleting() && throwable != null) {
-                    request.getAsyncContextInternal().setErrorState(throwable, true);
-                }
-            } else {
-                request.finishRequest();
-                response.finishResponse();
-            }
-
         } catch (IOException e) {
             // Ignore
         } finally {
-            // Access log
-            if (!async && postParseSuccess) {
-                // Log only if processing was invoked.
-                // If postParseRequest() failed, it has already logged it.
-                request.getMappingData().context.logAccess(request, response,
-                        System.currentTimeMillis() - req.getStartTime(), false);
-            }
-
-            req.getRequestProcessor().setWorkerThreadName(null);
-            AtomicBoolean error = new AtomicBoolean(false);
-            res.action(ActionCode.IS_ERROR, error);
-
-            // Recycle the wrapper request and response
-            if (!async || error.get()) {
-                request.recycle();
-                response.recycle();
-            }
+            // ...
         }
     }
 

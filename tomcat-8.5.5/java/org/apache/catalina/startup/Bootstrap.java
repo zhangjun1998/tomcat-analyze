@@ -334,7 +334,7 @@ public final class Bootstrap {
         if (catalinaDaemon == null) {
             init();
         }
-
+        // 反射调用Catalina的start()方法
         Method method = catalinaDaemon.getClass().getMethod("start", (Class[]) null);
         method.invoke(catalinaDaemon, (Object[]) null);
     }

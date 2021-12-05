@@ -725,12 +725,7 @@ public class StandardHost extends ContainerBase implements Host {
      */
     @Override
     public void addChild(Container child) {
-
         child.addLifecycleListener(new MemoryLeakTrackingListener());
-
-        if (!(child instanceof Context))
-            throw new IllegalArgumentException
-                (sm.getString("standardHost.notContext"));
         super.addChild(child);
 
     }
@@ -862,31 +857,23 @@ public class StandardHost extends ContainerBase implements Host {
      */
     @Override
     protected synchronized void startInternal() throws LifecycleException {
-
-        // Set error report valve
+        // 主要用于寻找ErrorReportValve，没有的话就加入到Pipeline中
         String errorValve = getErrorReportValveClass();
         if ((errorValve != null) && (!errorValve.equals(""))) {
-            try {
-                boolean found = false;
-                Valve[] valves = getPipeline().getValves();
-                for (Valve valve : valves) {
-                    if (errorValve.equals(valve.getClass().getName())) {
-                        found = true;
-                        break;
-                    }
+            boolean found = false;
+            Valve[] valves = getPipeline().getValves();
+            for (Valve valve : valves) {
+                if (errorValve.equals(valve.getClass().getName())) {
+                    found = true;
+                    break;
                 }
-                if(!found) {
-                    Valve valve =
-                        (Valve) Class.forName(errorValve).newInstance();
-                    getPipeline().addValve(valve);
-                }
-            } catch (Throwable t) {
-                ExceptionUtils.handleThrowable(t);
-                log.error(sm.getString(
-                        "standardHost.invalidErrorReportValveClass",
-                        errorValve), t);
+            }
+            if(!found) {
+                Valve valve = (Valve) Class.forName(errorValve).newInstance();
+                getPipeline().addValve(valve);
             }
         }
+        // 调用父类ContainerBase的startInternal()方法完成启动
         super.startInternal();
     }
 

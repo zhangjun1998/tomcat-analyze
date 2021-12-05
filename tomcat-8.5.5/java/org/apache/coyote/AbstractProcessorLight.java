@@ -38,8 +38,7 @@ public abstract class AbstractProcessorLight implements Processor {
 
 
     @Override
-    public SocketState process(SocketWrapperBase<?> socketWrapper, SocketEvent status)
-            throws IOException {
+    public SocketState process(SocketWrapperBase<?> socketWrapper, SocketEvent status) throws IOException {
 
         SocketState state = SocketState.CLOSED;
         Iterator<DispatchType> dispatches = null;
@@ -52,11 +51,7 @@ public abstract class AbstractProcessorLight implements Processor {
             } else if (isAsync() || isUpgrade() || state == SocketState.ASYNC_END) {
                 state = dispatch(status);
                 if (state == SocketState.OPEN) {
-                    // There may be pipe-lined data to read. If the data isn't
-                    // processed now, execution will exit this loop and call
-                    // release() which will recycle the processor (and input
-                    // buffer) deleting any pipe-lined data. To avoid this,
-                    // process it now.
+                    // 交给具体的协议处理
                     state = service(socketWrapper);
                 }
             } else if (status == SocketEvent.OPEN_WRITE) {
